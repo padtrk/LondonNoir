@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>343 — A Night on the Bus</title>
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Oswald:wght@300;400;700&family=IM+Fell+English:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0c0b09;
+    --paper: #ede8dc;
+    --mid: #6a6459;
+    --accent: #c8b48a;
+    --cap-bg: rgba(12,11,9,0.94);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'Special Elite', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  #masthead {
+    position: fixed; top:0; left:0; right:0; z-index:100;
+    background: var(--ink);
+    border-bottom: 2px solid #2a2820;
+    padding: 0.55rem 1rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  }
+  #masthead-title {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700; font-size: 1.35rem;
+    letter-spacing: 0.14em; color: var(--paper); white-space: nowrap;
+  }
+  #masthead-title span {
+    color: var(--mid); font-weight: 300; font-size: 0.75rem;
+    display: block; letter-spacing: 0.28em;
+  }
+  #status-bar {
+    font-family: 'Oswald', sans-serif;
+    font-size: 0.62rem; letter-spacing: 0.07em;
+    color: var(--mid); text-align: right; line-height: 1.55;
+  }
+  #status-bar .live { color: var(--accent); }
+  #strip {
+    margin-top: 68px;
+    padding: 0.5rem 0 4rem;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .panel {
+    width: 100%; max-width: 520px;
+    animation: drop 0.7s cubic-bezier(.22,.68,0,1.2) both;
+    border-bottom: 1px solid #1e1c18;
+  }
+  @keyframes drop {
+    from { opacity:0; transform:translateY(16px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  .panel svg { display:block; width:100%; }
+  .panel-caption {
+    background: var(--cap-bg);
+    border-top: 1px solid #2a2820;
+    padding: 0.9rem 1.1rem 0.75rem;
+    font-family: 'IM Fell English', serif;
+    font-size: 0.87rem; line-height: 1.68;
+    color: var(--paper);
+  }
+  .panel-meta {
+    margin-top: 0.5rem;
+    font-family: 'Oswald', sans-serif;
+    font-size: 0.58rem; letter-spacing: 0.11em;
+    color: #4a4640; display: flex; gap: 0.9rem;
+  }
+  #loading {
+    margin-top: 130px; text-align: center;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 300; letter-spacing: 0.28em;
+    font-size: 0.75rem; color: var(--mid);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:0.35} 50%{opacity:1} }
+  #next-panel {
+    position: fixed; bottom:0; left:0; right:0;
+    background: var(--ink);
+    border-top: 1px solid #1e1c18;
+    padding: 0.45rem 1rem;
+    font-family: 'Oswald', sans-serif;
+    font-size: 0.58rem; letter-spacing: 0.14em;
+    color: #3a3830; text-align: center; z-index: 100;
+  }
+  #next-panel span { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div id="masthead">
+  <div>
+    <div id="masthead-title">343 <span>NEW CROSS GATE — WATERLOO</span></div>
+  </div>
+  <div id="status-bar">
+    <div id="status-time">—</div>
+    <div id="status-data">GATHERING INTELLIGENCE…</div>
+  </div>
+</div>
+
+<div id="loading">BOARDING THE 343…</div>
+<div id="strip"></div>
+<div id="next-panel">NEXT TRANSMISSION IN <span id="countdown">—</span></div>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const ROUTE='343';
+const INTERVAL_MS=5*60*1000;
+const RLAT=51.4997,RLON=-0.0985;
+
+const STOPS=[
+  {name:'New Cross Gate',   id:'490011517S'},
+  {name:'Old Kent Road',    id:'490000175E'},
+  {name:'Elephant & Castle',id:'490000078N'},
+  {name:'Borough',          id:'490003481N'},
+  {name:'Waterloo',         id:'490015148S'},
+];
+
+const SAINTS={
+  '01-01':'the Solemnity of Mary','02-02':'Candlemas','02-14':"St Valentine's Day",
+  '03-01':"St David's Day",'03-17':"St Patrick's Day",
+  '03-25':'Lady Day, one of the old quarter days',
+  '04-23':"St George's Day — patron of England",
+  '05-01':'May Day, the old workers feast',
+  '06-24':'Midsummer, the Feast of St John the Baptist',
+  '07-15':"St Swithin's Day",
+  '09-29':'Michaelmas — the quarter day of the archangels',
+  '10-31':"All Hallows Eve",'11-01':"All Saints Day",
+  '11-02':'All Souls Day — the day of the dead',
+  '11-11':'Armistice Day, the Feast of St Martin',
+  '12-21':'the Winter Solstice','12-25':'Christmas Day',
+};
+
+// ─── WORLD STATE ──────────────────────────────────────────────────────────────
+let W={weather:null,airQuality:null,carbon:null,tide:null,
+       busArrivals:null,lastBus:null,parliament:null,overpass:null,panelCount:0};
+let cdSecs=INTERVAL_MS/1000,cdTimer=null;
+
+// ─── DATA FETCHERS ────────────────────────────────────────────────────────────
+async function fetchWeather(){try{const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${RLAT}&longitude=${RLON}&current=temperature_2m,rain,weather_code,wind_speed_10m&timezone=Europe/London`);W.weather=(await r.json()).current;}catch(e){}}
+async function fetchAir(){try{const r=await fetch(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${RLAT}&longitude=${RLON}&current=pm10,nitrogen_dioxide&timezone=Europe/London`);W.airQuality=(await r.json()).current;}catch(e){}}
+async function fetchCarbon(){try{const r=await fetch('https://api.carbonintensity.org.uk/intensity');W.carbon=(await r.json()).data?.[0]?.intensity;}catch(e){}}
+async function fetchTide(){try{const r=await fetch('https://environment.data.gov.uk/flood-monitoring/id/stations/E70839/readings?latest');W.tide=(await r.json()).items?.[0];}catch(e){}}
+async function fetchBus(){
+  try{
+    const stop=STOPS[Math.floor(Math.random()*STOPS.length)];
+    const r=await fetch(`https://api.tfl.gov.uk/StopPoint/${stop.id}/Arrivals`);
+    const arr=(await r.json()).filter(a=>a.lineName===ROUTE).sort((a,b)=>a.timeToStation-b.timeToStation);
+    W.busArrivals=W.lastBus={stop:stop.name,arrivals:arr.slice(0,3)};
+  }catch(e){W.busArrivals=W.lastBus;}
+}
+async function fetchParliament(){
+  try{
+    const d=new Date().toISOString().split('T')[0];
+    const r=await fetch(`https://whatson-api.parliament.uk/calendar/events/withdaynotes.json/${d}/${d}`);
+    const items=(await r.json())?.[0]?.Events||[];
+    if(items.length)W.parliament=items[0].Description||items[0].Title||null;
+  }catch(e){}
+}
+async function fetchOverpass(){
+  try{
+    const q=`[out:json][timeout:10];(node["name"]["amenity"~"pub|place_of_worship|courthouse|library"](51.48,-0.11,51.51,-0.08);node["name"]["historic"](51.48,-0.11,51.51,-0.08););out 8;`;
+    const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:q});
+    W.overpass=(await r.json()).elements?.filter(e=>e.tags?.name).map(e=>({name:e.tags.name,type:e.tags.amenity||e.tags.historic||'place'}));
+  }catch(e){}
+}
+async function refreshAll(){
+  await Promise.allSettled([fetchWeather(),fetchAir(),fetchCarbon(),fetchTide(),fetchBus(),fetchParliament(),fetchOverpass()]);
+  updateStatus();
+}
+function updateStatus(){
+  const t=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  document.getElementById('status-time').textContent=t;
+  const bits=[];
+  if(W.weather){const rain=W.weather.rain>0?`RAIN ${W.weather.rain}mm`:'DRY';bits.push(`${Math.round(W.weather.temperature_2m)}° ${rain}`);}
+  if(W.carbon)bits.push(`GRID: ${W.carbon.index?.toUpperCase()}`);
+  if(W.busArrivals?.arrivals?.length>0){const m=Math.round(W.busArrivals.arrivals[0].timeToStation/60);bits.push(`343: ${m}MIN`);}
+  document.getElementById('status-data').innerHTML=bits.map(b=>`<span class="live">${b}</span>`).join(' · ')||'WATCHING…';
+}
+
+// ─── DRAWING ENGINE ───────────────────────────────────────────────────────────
+// Seeded PRNG — deterministic per panel seed
+let _s=0;
+function sr(){_s=((_s*1664525+1013904223)&0xffffffff)>>>0;return _s/4294967295;}
+function seed(v){_s=v|0;}
+
+// Wobbly path between two points
+function wLine(x1,y1,x2,y2,segs,amp){
+  segs=segs||10;amp=amp||2;
+  let d=`M${x1.toFixed(1)},${y1.toFixed(1)}`;
+  for(let i=1;i<=segs;i++){
+    const t=i/segs;
+    const x=x1+(x2-x1)*t+(sr()-0.5)*amp*2;
+    const y=y1+(y2-y1)*t+(sr()-0.5)*amp*2;
+    d+=` L${x.toFixed(1)},${y.toFixed(1)}`;
+  }
+  return d;
+}
+
+// Wobbly rectangle path
+function wRect(x,y,w,h,amp){
+  amp=amp||2;
+  const j=()=>(sr()-0.5)*amp*2;
+  return `M${(x+j()).toFixed(1)},${(y+j()).toFixed(1)} L${(x+w+j()).toFixed(1)},${(y+j()).toFixed(1)} L${(x+w+j()).toFixed(1)},${(y+h+j()).toFixed(1)} L${(x+j()).toFixed(1)},${(y+h+j()).toFixed(1)} Z`;
+}
+
+// Wobbly ellipse / blob
+function wBlob(cx,cy,rx,ry,pts){
+  pts=pts||16;
+  let d='';
+  for(let i=0;i<=pts;i++){
+    const a=(i/pts)*Math.PI*2;
+    const jrx=rx*(0.78+sr()*0.44);
+    const jry=ry*(0.78+sr()*0.44);
+    const px=(cx+Math.cos(a)*jrx).toFixed(1);
+    const py=(cy+Math.sin(a)*jry).toFixed(1);
+    d+=(i===0?`M${px},${py}`:`L${px},${py}`);
+  }
+  return d+'Z';
+}
+
+// Wobbly circle outline
+function wCircle(cx,cy,r,segs,amp){
+  segs=segs||22;amp=amp||2;
+  let d='';
+  for(let i=0;i<=segs;i++){
+    const a=(i/segs)*Math.PI*2;
+    const jr=r+(sr()-0.5)*amp*2;
+    const px=(cx+Math.cos(a)*jr).toFixed(1);
+    const py=(cy+Math.sin(a)*jr).toFixed(1);
+    d+=(i===0?`M${px},${py}`:`L${px},${py}`);
+  }
+  return d+'Z';
+}
+
+// Hatch a rectangular clip zone — multiple overlapping passes for tone depth
+// density: 1=light, 2=mid, 3=dark
+function hatch(clipId,cx,cy,cw,ch,angleDeg,density,stroke,sw){
+  stroke=stroke||'#0d0c0a';sw=sw||0.75;
+  const spacings=[18,10,6];
+  const opacities=[0.35,0.42,0.5];
+  const sp=spacings[Math.min(density-1,2)];
+  const op=opacities[Math.min(density-1,2)];
+  const rad=angleDeg*Math.PI/180;
+  const cos=Math.cos(rad),sin=Math.sin(rad);
+  const diag=Math.sqrt(cw*cw+ch*ch)*1.4;
+  let lines='';
+  for(let d=-diag;d<diag;d+=sp){
+    const jit=(sr()-0.5)*sp*0.3;
+    const x1=d*cos+jit; const y1=d*sin+jit;
+    const x2=x1-sin*diag; const y2=y1+cos*diag;
+    const lop=(op*(0.7+sr()*0.6)).toFixed(2);
+    const lsw=(sw*(0.6+sr()*0.8)).toFixed(2);
+    lines+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${stroke}" stroke-width="${lsw}" opacity="${lop}"/>`;
+  }
+  return `<clipPath id="${clipId}"><rect x="${cx}" y="${cy}" width="${cw}" height="${ch}"/></clipPath><g clip-path="url(#${clipId})" transform="translate(${cx},${cy})">${lines}</g>`;
+}
+
+// Hatch a polygon/path zone using a named clipPath path
+function hatchPath(clipId,pathD,offX,offY,angleDeg,density,stroke,sw){
+  stroke=stroke||'#0d0c0a';sw=sw||0.75;
+  const spacings=[18,10,6];
+  const opacities=[0.32,0.40,0.50];
+  const sp=spacings[Math.min(density-1,2)];
+  const op=opacities[Math.min(density-1,2)];
+  const rad=angleDeg*Math.PI/180;
+  const cos=Math.cos(rad),sin=Math.sin(rad);
+  const diag=600;
+  let lines='';
+  for(let d=-diag;d<diag;d+=sp){
+    const jit=(sr()-0.5)*sp*0.25;
+    const x1=d*cos+jit;const y1=d*sin+jit;
+    const x2=x1-sin*diag;const y2=y1+cos*diag;
+    const lop=(op*(0.7+sr()*0.6)).toFixed(2);
+    const lsw=(sw*(0.6+sr()*0.8)).toFixed(2);
+    lines+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${stroke}" stroke-width="${lsw}" opacity="${lop}"/>`;
+  }
+  return `<clipPath id="${clipId}"><path d="${pathD}"/></clipPath><g clip-path="url(#${clipId})" transform="translate(${offX},${offY})">${lines}</g>`;
+}
+
+// Stipple dots
+function stipple(x,y,w,h,density,col,maxR){
+  maxR=maxR||1.3;let s='';
+  const n=Math.floor(w*h*density);
+  for(let i=0;i<n;i++){
+    const px=(x+sr()*w).toFixed(1);
+    const py=(y+sr()*h).toFixed(1);
+    const r=(sr()*maxR+0.15).toFixed(2);
+    const op=(0.25+sr()*0.65).toFixed(2);
+    s+=`<circle cx="${px}" cy="${py}" r="${r}" fill="${col}" opacity="${op}"/>`;
+  }
+  return s;
+}
+
+// Rain
+function rain(count,x,y,w,h){
+  let s='';
+  for(let i=0;i<count;i++){
+    const rx=(x+sr()*w).toFixed(1);
+    const ry=(y+sr()*h).toFixed(1);
+    const len=5+sr()*20;
+    const op=(0.07+sr()*0.22).toFixed(2);
+    const sw=(0.4+sr()*0.7).toFixed(2);
+    s+=`<line x1="${rx}" y1="${ry}" x2="${(parseFloat(rx)+len*0.15).toFixed(1)}" y2="${(parseFloat(ry)+len).toFixed(1)}" stroke="#7a7870" stroke-width="${sw}" opacity="${op}"/>`;
+  }
+  return s;
+}
+
+// Paper texture fibres
+function paper(s2){
+  seed(s2+77777);let s='';
+  for(let y=0;y<340;y+=2.8){
+    const op=(0.012+sr()*0.02).toFixed(3);
+    const dy=(sr()*1.2-0.6).toFixed(1);
+    s+=`<line x1="0" y1="${y}" x2="520" y2="${(y+parseFloat(dy)).toFixed(1)}" stroke="#e0d8c8" stroke-width="0.9" opacity="${op}"/>`;
+  }
+  return s;
+}
+
+// Standard defs block
+function defs(id){
+  return `<filter id="grit${id}">
+    <feTurbulence type="fractalNoise" baseFrequency="0.88" numOctaves="4" stitchTiles="stitch"/>
+    <feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.11 0"/>
+    <feComposite in2="SourceGraphic" operator="in"/>
+    <feBlend in="SourceGraphic" mode="multiply"/>
+  </filter>
+  <filter id="softblur${id}"><feGaussianBlur stdDeviation="1.4"/></filter>`;
+}
+
+// ─── PANEL: FACE AT WINDOW ────────────────────────────────────────────────────
+function svgFace(s0){
+  seed(s0);
+  const isRaining=(W.weather?.rain||0)>0.25;
+  const h=new Date().getHours();
+  const dark=h>=20||h<6;
+  const paperTone=dark?'#c8c4b8':'#d8d4c8';
+
+  let s=`<svg viewBox="0 0 520 340" xmlns="http://www.w3.org/2000/svg"><defs>${defs('A')}</defs>`;
+  s+=`<rect width="520" height="340" fill="${paperTone}"/>`;
+  s+=`<g opacity="0.45">${paper(s0)}</g>`;
+
+  // Heavy outer window frame — inked mass
+  const frameD=wRect(20,12,480,316,2.5);
+  s+=`<path d="${frameD}" fill="#1a1814" stroke="#0c0b09" stroke-width="3"/>`;
+  s+=hatchPath('frHatch',frameD,20,12,75,2,'#0c0b09',0.9);
+
+  // Glass pane — lighter tone
+  const glassD=wRect(34,26,452,284,2);
+  s+=`<path d="${glassD}" fill="${dark?'#a8a49a':'#bcb8b0'}" stroke="#2a2820" stroke-width="1.5"/>`;
+  // Glass midtone hatch — very light, suggests the grey of the city
+  s+=hatchPath('glHatch',glassD,34,26,10,1,'#8a8880',0.5);
+
+  // City outside — blurred impressionistic buildings
+  for(let i=0;i<5;i++){
+    const bx=50+sr()*360;const bw=25+sr()*70;const bh=50+sr()*130;
+    const by=40+sr()*80;
+    s+=`<rect x="${bx.toFixed(0)}" y="${by.toFixed(0)}" width="${bw.toFixed(0)}" height="${bh.toFixed(0)}" fill="${dark?'#6a6860':'#8a8880'}" opacity="0.22" filter="url(#softblurA)"/>`;
+  }
+  // Sodium light glows — smeared
+  for(let i=0;i<6;i++){
+    const lx=60+sr()*400;const ly=70+sr()*160;
+    s+=`<circle cx="${lx.toFixed(0)}" cy="${ly.toFixed(0)}" r="${(12+sr()*35).toFixed(0)}" fill="#d4c070" opacity="${(0.04+sr()*0.09).toFixed(2)}" filter="url(#softblurA)"/>`;
+  }
+
+  // Condensation smears on glass — horizontal wobbled strokes
+  for(let i=0;i<18;i++){
+    const wy=38+sr()*265;const wx=38+sr()*180;const wl=15+sr()*130;
+    const op=(0.05+sr()*0.12).toFixed(2);
+    s+=`<path d="${wLine(wx,wy,wx+wl,wy+sr()*5-2.5,5,1)}" stroke="#c0bcb4" stroke-width="${(0.7+sr()*1.4).toFixed(1)}" fill="none" opacity="${op}"/>`;
+  }
+
+  // Rain on glass
+  if(isRaining){
+    // Diagonal streaks
+    for(let i=0;i<40;i++){
+      const rx=38+sr()*444;const ry=30+sr()*270;
+      const rl=4+sr()*26;const op=(0.10+sr()*0.28).toFixed(2);
+      s+=`<path d="M${rx.toFixed(1)},${ry.toFixed(1)} Q${(rx+sr()*4).toFixed(1)},${(ry+rl*0.4).toFixed(1)} ${(rx+sr()*3-1.5).toFixed(1)},${(ry+rl).toFixed(1)}" stroke="#5a5850" stroke-width="${(0.5+sr()*0.9).toFixed(1)}" fill="none" opacity="${op}"/>`;
+    }
+    // Rivulets — meandering
+    for(let i=0;i<5;i++){
+      const rx=60+sr()*400;let ry=30;
+      let d=`M${rx.toFixed(1)},${ry}`;
+      for(let j=0;j<9;j++){ry+=14+sr()*22;const dx=(sr()-0.5)*14;d+=` Q${(rx+dx).toFixed(1)},${(ry-8).toFixed(1)} ${(rx+(sr()-0.5)*10).toFixed(1)},${ry.toFixed(1)}`;}
+      s+=`<path d="${d}" stroke="#484840" stroke-width="${(0.5+sr()*0.8).toFixed(1)}" fill="none" opacity="${(0.14+sr()*0.22).toFixed(2)}"/>`;
+    }
+  }
+
+  // Window cross-frame — heavy ink dividers
+  s+=`<path d="${wLine(34,172,486,174,8,1.5)}" stroke="#1a1814" stroke-width="11" fill="none"/>`;
+  s+=`<path d="${wLine(263,26,265,310,6,1.5)}" stroke="#1a1814" stroke-width="11" fill="none"/>`;
+
+  // ── CHARACTER ──
+  const fx=178,fy=78;
+
+  // Shadow mass behind figure — deep ink blot
+  s+=`<path d="${wBlob(fx,fy+82,78,108,20)}" fill="#0f0e0c"/>`;
+  s+=hatchPath('shadH',wBlob(fx,fy+82,78,108,20),fx-78,fy-26,55,3,'#0a0908',1.0);
+
+  // HAT — crown, solid then hatched
+  const hatD=wRect(fx-46,fy-58,92,56,2.5);
+  s+=`<path d="${hatD}" fill="#161412" stroke="#0c0b09" stroke-width="2.2"/>`;
+  s+=hatchPath('hatSh',hatD,fx-46,fy-58,65,2,'#0c0b09',0.9);
+  // Hat crown highlight — single pale scratched edge
+  s+=`<path d="${wLine(fx-42,fy-54,fx-42,fy-8,7,1.2)}" stroke="#2a2820" stroke-width="1.1" fill="none" opacity="0.6"/>`;
+  // Hat brim
+  const brimD=wRect(fx-62,fy-6,124,13,2.5);
+  s+=`<path d="${brimD}" fill="#141210" stroke="#0c0b09" stroke-width="2"/>`;
+  s+=hatchPath('brimH',brimD,fx-62,fy-6,20,2,'#0c0b09',0.7);
+
+  // FACE — pale luminous oval
+  const faceD=wBlob(fx,fy+48,52,64,18);
+  s+=`<path d="${faceD}" fill="#cec8bc" stroke="#4a4440" stroke-width="1.2"/>`;
+  // Face shadow — left and forehead hatching
+  s+=hatchPath('faceSh1',faceD,fx-52,fy-16,68,1,'#6a6458',0.55);
+  // Cheek/jaw shadow — heavier
+  const jawSh=wBlob(fx+18,fy+72,36,32,12);
+  s+=`<path d="${jawSh}" fill="${dark?'#b8b2a6':'#c4beb2'}" opacity="0.5"/>`;
+  s+=hatchPath('jawH',jawSh,fx-18,fy+40,80,2,'#5a5450',0.5);
+  // Stipple skin texture
+  s+=stipple(fx-48,fy-12,96,118,0.0028,'#3a3430',1.1);
+
+  // EYES — deep-set, inked shadow above, pale glint
+  const eyeL=wBlob(fx-18,fy+34,10,6,8);
+  const eyeR=wBlob(fx+18,fy+34,10,6,8);
+  s+=`<path d="${eyeL}" fill="#141210"/>`;
+  s+=`<path d="${eyeR}" fill="#141210"/>`;
+  // Brow shadow above each eye
+  s+=hatch('browL',fx-30,fy+20,25,12,15,2,'#3a3430',0.7);
+  s+=hatch('browR',fx+5,fy+20,25,12,15,2,'#3a3430',0.7);
+  // Eye glints
+  s+=`<circle cx="${fx-12}" cy="${fy+31}" r="2" fill="#d4d0c4" opacity="0.85"/>`;
+  s+=`<circle cx="${fx+24}" cy="${fy+31}" r="1.7" fill="#d4d0c4" opacity="0.75"/>`;
+
+  // Nose bridge — subtle line
+  s+=`<path d="${wLine(fx+2,fy+50,fx+12,fy+70,5,1.2)}" stroke="#4a4440" stroke-width="1.3" fill="none"/>`;
+  s+=`<path d="${wLine(fx+12,fy+70,fx+3,fy+73,3,0.8)}" stroke="#4a4440" stroke-width="1.2" fill="none"/>`;
+  // Nostril stipple
+  s+=stipple(fx-2,fy+66,18,12,0.01,'#3a3430',1.2);
+
+  // Mouth — grim, thin
+  s+=`<path d="${wLine(fx-14,fy+84,fx+12,fy+81,5,1.0)}" stroke="#2a2820" stroke-width="1.8" fill="none"/>`;
+
+  // COAT collar and shoulders
+  const coatD=`M${fx-95},340 Q${fx-82},${fy+142} ${fx-58},${fy+114} Q${fx-32},${fy+106} ${fx},${fy+110} Q${fx+32},${fy+106} ${fx+58},${fy+114} Q${fx+82},${fy+142} ${fx+95},340 Z`;
+  s+=`<path d="${coatD}" fill="#181614" stroke="#0c0b09" stroke-width="2.2"/>`;
+  s+=hatchPath('coatH1',coatD,fx-95,fy+106,18,2,'#0c0b09',0.9);
+  s+=hatchPath('coatH2',coatD,fx-95,fy+106,65,3,'#0a0908',0.7);
+  // Coat lapel lines
+  s+=`<path d="${wLine(fx-16,fy+110,fx-44,fy+158,5,1.5)}" stroke="#0c0b09" stroke-width="1.8" fill="none"/>`;
+  s+=`<path d="${wLine(fx+16,fy+110,fx+44,fy+158,5,1.5)}" stroke="#0c0b09" stroke-width="1.8" fill="none"/>`;
+  // Coat highlight edge — scratched
+  s+=`<path d="${wLine(fx-88,fy+125,fx-82,270,8,2)}" stroke="#2a2820" stroke-width="1.0" fill="none" opacity="0.5"/>`;
+
+  // NECK — pale, hatched
+  const neckD=wRect(fx-17,fy+108,34,24,1.5);
+  s+=`<path d="${neckD}" fill="#c4beb2" stroke="#4a4440" stroke-width="0.9"/>`;
+  s+=hatchPath('neckH',neckD,fx-17,fy+108,82,1,'#5a5450',0.5);
+
+  // Bus seat top — frame bottom
+  const seatD=wRect(0,304,520,36,2);
+  s+=`<path d="${seatD}" fill="#1a1814" stroke="#0c0b09" stroke-width="2"/>`;
+  s+=hatch('seatH',0,304,520,36,0,3,'#0c0b09',0.9);
+
+  // Handrail — vertical pole, right side
+  s+=`<path d="${wLine(308,26,310,308,9,1.5)}" stroke="#2a2820" stroke-width="5" fill="none" opacity="0.9"/>`;
+  s+=`<path d="${wLine(307,26,309,308,9,0.5)}" stroke="#c4b880" stroke-width="0.9" fill="none" opacity="0.25"/>`;
+
+  // Panel border — heavy inked edge with wobble
+  s+=`<path d="${wRect(2,2,516,336,1.5)}" fill="none" stroke="#0c0b09" stroke-width="5.5"/>`;
+  s+=`<rect width="520" height="340" fill="transparent" filter="url(#gritA)"/>`;
+  s+=`</svg>`;
+  return s;
+}
+
+// ─── PANEL: WIDE EXTERIOR ─────────────────────────────────────────────────────
+function svgWide(s0){
+  seed(s0);
+  const isRaining=(W.weather?.rain||0)>0.25;
+  const h=new Date().getHours();
+  const dark=h>=20||h<7;
+
+  let s=`<svg viewBox="0 0 520 340" xmlns="http://www.w3.org/2000/svg"><defs>${defs('B')}</defs>`;
+  s+=`<rect width="520" height="340" fill="#cac6ba"/>`;
+  s+=`<g opacity="0.35">${paper(s0)}</g>`;
+
+  // SKY — densely hatched ink mass
+  s+=hatch('skyH1',0,0,520,210,10,dark?3:2,'#3a3830',0.7);
+  s+=hatch('skyH2',0,0,520,210,70,dark?2:1,'#2a2820',0.5);
+  if(dark)s+=hatch('skyH3',0,0,520,210,40,1,'#1a1814',0.35);
+  // Stipple sky for tonal depth
+  s+=stipple(0,0,520,210,0.0012,'#2a2820',1.4);
+
+  // Clouds — inked blobs with hatch
+  const clouds=[[120,55,155,52],[340,40,170,58],[240,75,190,48]];
+  clouds.forEach(([cx,cy,rx,ry],ci)=>{
+    const cd=wBlob(cx,cy,rx,ry,18);
+    s+=`<path d="${cd}" fill="${dark?'#484440':'#666058'}" opacity="0.85"/>`;
+    s+=hatchPath(`cl${ci}`,cd,cx-rx,cy-ry,12,2,'#2a2820',0.7);
+  });
+
+  // BUILDINGS — inked, hatched shadow sides
+  const bldgs=[
+    {x:0,  w:78, h:162,shadow:'right'},
+    {x:70, w:52, h:128,shadow:'right'},
+    {x:114,w:98, h:178,shadow:'right'},
+    {x:348,w:62, h:142,shadow:'left'},
+    {x:402,w:118,h:164,shadow:'left'},
+  ];
+  bldgs.forEach((b,bi)=>{
+    const topY=240-b.h;
+    const bD=wRect(b.x,topY,b.w,b.h,2);
+    s+=`<path d="${bD}" fill="${dark?'#282420':'#383430'}" stroke="#0c0b09" stroke-width="2"/>`;
+    // Shadow side hatching
+    const shX=b.shadow==='right'?b.x+b.w*0.55:b.x;
+    const shW=b.w*0.45;
+    s+=hatch(`bsh${bi}`,shX,topY,shW,b.h,80,dark?3:2,'#0c0b09',0.85);
+    // Windows
+    for(let wy=topY+14;wy<234;wy+=22){
+      for(let wx=b.x+10;wx<b.x+b.w-16;wx+=18){
+        const lit=sr()>0.52;
+        if(lit){
+          const wD=wRect(wx,wy,13,10,1);
+          s+=`<path d="${wD}" fill="#c8b860" opacity="${(0.4+sr()*0.35).toFixed(2)}"/>`;
+          if(sr()>0.55)s+=`<path d="${wBlob(wx+6,wy+4,5,8,6)}" fill="#2a2418" opacity="0.7"/>`;
+        }else{
+          s+=`<path d="${wRect(wx,wy,13,10,1)}" fill="#141210" stroke="#1a1814" stroke-width="0.6" opacity="0.6"/>`;
+        }
+      }
+    }
+  });
+
+  // Street lamp — hand-drawn, scratchy
+  s+=`<path d="${wLine(84,60,86,240,7,1.2)}" stroke="#2a2820" stroke-width="3.5" fill="none"/>`;
+  s+=`<path d="${wLine(84,62,108,56,5,1)}" stroke="#2a2820" stroke-width="3" fill="none"/>`;
+  s+=`<path d="${wBlob(109,54,7,4,8)}" fill="#d8c880" opacity="0.88"/>`;
+  s+=stipple(82,40,60,60,0.0016,'#c8b860',2.8);
+
+  // PAVEMENT
+  const pavD=wRect(0,240,520,25,1.5);
+  s+=`<path d="${pavD}" fill="#9a9690" stroke="#0c0b09" stroke-width="1.2"/>`;
+  s+=hatch('pavH',0,240,520,25,8,1,'#7a7870',0.4);
+  // Flagstone joints — wobbled verticals
+  for(let i=0;i<9;i++){
+    s+=`<path d="${wLine(i*60,240,i*60+sr()*8-4,265,4,1.2)}" stroke="#6a6860" stroke-width="0.8" fill="none" opacity="0.45"/>`;
+  }
+
+  // ROAD — very dark, heavily hatched
+  const rdD=wRect(0,264,520,76,1);
+  s+=`<path d="${rdD}" fill="#161412" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatch('rdH1',0,264,520,76,0,3,'#0c0b09',0.85);
+  s+=hatch('rdH2',0,264,520,76,85,1,'#0a0908',0.4);
+  // Road markings — faint wobbly bars
+  for(let i=0;i<3;i++){s+=`<path d="${wRect(178+i*54,300,34,5,1)}" fill="#3a3830" opacity="0.5"/>`;}
+
+  // ── THE BUS ──
+  const bx=192,by=115;
+  // Under-bus shadow — inky pool
+  s+=`<path d="${wBlob(bx+100,258,118,14,12)}" fill="#0a0908" opacity="0.78"/>`;
+
+  // Upper deck body
+  const udD=wRect(bx+5,by,192,66,2);
+  s+=`<path d="${udD}" fill="#252220" stroke="#0c0b09" stroke-width="2.5"/>`;
+  s+=hatch('udH',bx+5,by,192,66,82,2,'#0c0b09',0.85);
+  s+=hatch('udH2',bx+5,by,192,66,38,1,'#0a0908',0.4);
+
+  // Lower deck body
+  const ldD=wRect(bx,by+63,200,80,2);
+  s+=`<path d="${ldD}" fill="#1e1c18" stroke="#0c0b09" stroke-width="2.5"/>`;
+  s+=hatch('ldH',bx,by+63,200,80,80,2,'#0c0b09',0.8);
+
+  // Roof strip
+  const roofD=wRect(bx+5,by-10,192,13,1.5);
+  s+=`<path d="${roofD}" fill="#141210" stroke="#0c0b09" stroke-width="1.5"/>`;
+
+  // Route blind
+  const blindD=wRect(bx+12,by+3,84,28,1.5);
+  s+=`<path d="${blindD}" fill="#0a0908" stroke="#181614" stroke-width="1"/>`;
+  s+=`<text x="${bx+54}" y="${by+22}" text-anchor="middle" font-family="Oswald,sans-serif" font-size="13" font-weight="700" fill="#c4b060" letter-spacing="2" opacity="0.9">343</text>`;
+
+  // Upper windows
+  for(let i=0;i<5;i++){
+    const lit=sr()>0.44;
+    const wx=bx+16+i*36;const wy=by+9;
+    const wD=wRect(wx,wy,28,38,1.5);
+    s+=`<path d="${wD}" fill="${lit?'#c0b050':'#0e0d0b'}" stroke="#0c0b09" stroke-width="1.5" opacity="${lit?0.5:0.85}"/>`;
+    if(lit){
+      s+=`<path d="${wBlob(wx+14,wy+24,9,13,8)}" fill="#282018" opacity="0.82"/>`;
+    }else{
+      s+=hatchPath(`uw${i}`,wD,wx,wy,52,2,'#0a0908',0.7);
+    }
+  }
+  // Lower windows
+  for(let i=0;i<4;i++){
+    const lwD=wRect(bx+16+i*44,by+71,34,30,1.5);
+    s+=`<path d="${lwD}" fill="#0c0b09" stroke="#0a0908" stroke-width="1.2" opacity="0.75"/>`;
+    s+=hatchPath(`lw${i}`,lwD,bx+16+i*44,by+71,48,2,'#0a0908',0.65);
+  }
+
+  // Wheels — wobbly circles with cross-hatched tread
+  [[bx+42,248],[bx+170,248]].forEach(([wx,wy],wi)=>{
+    const tyreD=wCircle(wx,wy,24,20,2);
+    s+=`<path d="${tyreD}" fill="#141210" stroke="#0c0b09" stroke-width="2.2"/>`;
+    s+=hatch(`tyr${wi}`,wx-24,wy-24,48,48,40,2,'#0a0908',0.8);
+    const hubD=wCircle(wx,wy,9,12,1.2);
+    s+=`<path d="${hubD}" fill="#1c1a16" stroke="#2a2820" stroke-width="1.2"/>`;
+    // Spoke suggestions — stipple
+    s+=stipple(wx-7,wy-7,14,14,0.025,'#2a2820',1.0);
+  });
+
+  // Bus road-wet reflection — faint smear
+  s+=hatch('refH',bx,262,200,30,88,1,'#2a2820',1.4);
+  if(isRaining)s+=rain(38,0,0,520,340);
+
+  s+=`<path d="${wRect(2,2,516,336,1.5)}" fill="none" stroke="#0c0b09" stroke-width="5.5"/>`;
+  s+=`<rect width="520" height="340" fill="transparent" filter="url(#gritB)"/>`;
+  s+=`</svg>`;
+  return s;
+}
+
+// ─── PANEL: INTERIOR ─────────────────────────────────────────────────────────
+function svgInterior(s0){
+  seed(s0);
+  const isRaining=(W.weather?.rain||0)>0.2;
+
+  let s=`<svg viewBox="0 0 520 340" xmlns="http://www.w3.org/2000/svg"><defs>${defs('C')}</defs>`;
+  s+=`<rect width="520" height="340" fill="#c8c4b8"/>`;
+  s+=`<g opacity="0.35">${paper(s0)}</g>`;
+
+  // CEILING — dark heavy mass
+  const ceilD=wRect(0,0,520,66,1.5);
+  s+=`<path d="${ceilD}" fill="#2e2c28" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatch('ceilH1',0,0,520,66,0,3,'#0c0b09',0.85);
+  s+=hatch('ceilH2',0,0,520,66,88,2,'#0a0908',0.5);
+  // Light strip — pale bar, stippled glow
+  const litD=wRect(162,9,196,10,1.5);
+  s+=`<path d="${litD}" fill="#d0c888" opacity="0.55"/>`;
+  s+=stipple(155,6,210,16,0.01,'#d8d090',1.6);
+
+  // AISLE FLOOR — vanishing point perspective
+  const vx=260,vy=98;
+  const floorD=`M152,340 L368,340 L${vx+22},${vy} L${vx-22},${vy} Z`;
+  s+=`<path d="${floorD}" fill="#1e1c18" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatchPath('flrH1',floorD,152,vy,5,2,'#161412',0.6);
+  s+=hatchPath('flrH2',floorD,152,vy,85,1,'#0c0b09',0.35);
+  // Receding aisle lines
+  for(let i=1;i<5;i++){
+    const t=i/5;
+    const lx1=152+(vx-22-152)*t,lx2=368+(vx+22-368)*t,ly=340+(vy-340)*t;
+    s+=`<path d="${wLine(lx1,ly,lx2,ly,4,0.8)}" stroke="#141210" stroke-width="0.9" fill="none" opacity="0.4"/>`;
+  }
+
+  // SEAT ROWS — perspective
+  const rows=[
+    {y:308,sw:158,sh:19,lx:12, rx:348},
+    {y:260,sw:120,sh:15,lx:38, rx:338},
+    {y:220,sw:96, sh:12,lx:58, rx:332},
+    {y:187,sw:78, sh:10,lx:74, rx:329},
+    {y:160,sw:64, sh:8, lx:88, rx:327},
+  ];
+  rows.forEach((row,ri)=>{
+    [row.lx,row.rx].forEach((sx,si)=>{
+      const sbH=row.sw*0.48;
+      const sbD=wRect(sx,row.y-sbH,row.sw,sbH,2);
+      s+=`<path d="${sbD}" fill="#1c1a16" stroke="#0c0b09" stroke-width="1.5"/>`;
+      s+=hatchPath(`sb${ri}${si}`,sbD,sx,row.y-sbH,42,2,'#0c0b09',0.7);
+      // Seat cushion
+      s+=`<path d="${wRect(sx,row.y,row.sw,row.sh,1.5)}" fill="#222018" stroke="#0c0b09" stroke-width="1"/>`;
+      // Passenger
+      if(sr()>0.4){
+        const px=sx+row.sw/2,py=row.y-sbH*0.18;
+        const bodyD=wBlob(px,py+row.sw*0.14,row.sw*0.21,row.sw*0.27,10);
+        const headD=wBlob(px,py-row.sw*0.2,row.sw*0.13,row.sw*0.17,8);
+        s+=`<path d="${bodyD}" fill="#141210"/>`;
+        s+=`<path d="${headD}" fill="#141210"/>`;
+        s+=hatchPath(`psh${ri}${si}`,headD,px-row.sw*0.15,py-row.sw*0.37,62,2,'#0a0908',0.55);
+      }
+    });
+  });
+
+  // SIDE WINDOWS — city visible, rainy impression
+  [[0,66,152,212],[368,66,152,212]].forEach(([wx,wy,ww,wh],wi)=>{
+    const winD=wRect(wx,wy,ww,wh,2);
+    s+=`<path d="${winD}" fill="${isRaining?'#7a7870':'#8a8880'}" stroke="#0c0b09" stroke-width="2"/>`;
+    s+=hatchPath(`wn${wi}`,winD,wx,wy,70,2,'#4a4840',0.4);
+    // City glow blobs
+    for(let i=0;i<4;i++){
+      s+=`<circle cx="${(wx+sr()*ww).toFixed(0)}" cy="${(wy+sr()*wh).toFixed(0)}" r="${(8+sr()*22).toFixed(0)}" fill="#c4a840" opacity="${(0.04+sr()*0.08).toFixed(2)}" filter="url(#softblurC)"/>`;
+    }
+    if(isRaining)s+=rain(14,wx,wy,ww,wh);
+    // Frame cross-bars
+    s+=`<path d="${wLine(wx,wy+wh*0.5,wx+ww,wy+wh*0.5,5,1)}" stroke="#0c0b09" stroke-width="5.5" fill="none"/>`;
+    s+=`<path d="${wLine(wx+ww*0.5,wy,wx+ww*0.5,wy+wh,5,1)}" stroke="#0c0b09" stroke-width="5.5" fill="none"/>`;
+  });
+
+  // HANDRAILS
+  [[193,66,193,340],[327,66,327,340]].forEach(([x1,y1,x2,y2],ri)=>{
+    s+=`<path d="${wLine(x1,y1,x2,y2,10,1.5)}" stroke="#5a5428" stroke-width="5" fill="none"/>`;
+    s+=`<path d="${wLine(x1-1,y1,x2-1,y2,10,0.5)}" stroke="#c8b040" stroke-width="0.9" fill="none" opacity="0.28"/>`;
+  });
+
+  // Destination board glint
+  s+=`<path d="${wRect(230,100,60,17,1)}" fill="#0a0908" opacity="0.75"/>`;
+  s+=`<text x="260" y="113" text-anchor="middle" font-family="Oswald,sans-serif" font-size="9" fill="#4a4428" letter-spacing="1">343</text>`;
+
+  s+=`<path d="${wRect(2,2,516,336,1.5)}" fill="none" stroke="#0c0b09" stroke-width="5.5"/>`;
+  s+=`<rect width="520" height="340" fill="transparent" filter="url(#gritC)"/>`;
+  s+=`</svg>`;
+  return s;
+}
+
+// ─── PANEL: STREET LEVEL ──────────────────────────────────────────────────────
+function svgStreet(s0){
+  seed(s0);
+  const isRaining=(W.weather?.rain||0)>0.2;
+  const h=new Date().getHours();
+  const dark=h>=20||h<7;
+
+  let s=`<svg viewBox="0 0 520 340" xmlns="http://www.w3.org/2000/svg"><defs>${defs('D')}</defs>`;
+  s+=`<rect width="520" height="340" fill="#c0bcb0"/>`;
+  s+=`<g opacity="0.35">${paper(s0)}</g>`;
+
+  // SKY — ink mass, maximum dark
+  const skyD=wRect(0,0,520,198,1.5);
+  s+=`<path d="${skyD}" fill="${dark?'#181614':'#222018'}" stroke="#0c0b09" stroke-width="1"/>`;
+  s+=hatch('skH1',0,0,520,198,10,dark?3:2,'#0c0b09',0.75);
+  s+=hatch('skH2',0,0,520,198,72,dark?2:1,'#0a0908',0.45);
+  s+=stipple(0,0,520,198,0.0014,'#0c0b09',1.5);
+
+  // Left building wall — oppressive, nearly full height
+  const wallD=wRect(0,0,118,268,2.5);
+  s+=`<path d="${wallD}" fill="#1a1814" stroke="#0c0b09" stroke-width="2.2"/>`;
+  s+=hatch('wlH1',0,0,118,268,85,3,'#0c0b09',0.85);
+  s+=hatch('wlH2',0,0,118,268,38,2,'#0a0908',0.45);
+  // Brick courses
+  for(let y=8;y<268;y+=17){
+    s+=`<path d="${wLine(0,y,118,y+sr()*2-1,5,0.7)}" stroke="#141210" stroke-width="0.7" fill="none" opacity="0.38"/>`;
+  }
+  // Brick verticals
+  for(let row=0;row<16;row++){
+    const off=row%2===0?0:10;
+    for(let col=0;col<7;col++){
+      s+=`<path d="${wLine(col*18+off,row*17,col*18+off,row*17+13,3,0.4)}" stroke="#141210" stroke-width="0.5" fill="none" opacity="0.25"/>`;
+    }
+  }
+  // Wall window — lit
+  const wallWinD=wRect(16,52,78,86,2);
+  s+=`<path d="${wallWinD}" fill="#c0b054" stroke="#0c0b09" stroke-width="2" opacity="0.48"/>`;
+  s+=`<path d="${wLine(55,52,55,138,4,0.8)}" stroke="#0c0b09" stroke-width="3" fill="none"/>`;
+  s+=`<path d="${wLine(16,95,94,95,4,0.8)}" stroke="#0c0b09" stroke-width="3" fill="none"/>`;
+  s+=hatchPath('wallWH',wallWinD,16,52,68,1,'#7a6830',0.3);
+  // Curtain figure
+  s+=`<path d="${wBlob(38,94,10,20,8)}" fill="#3a3018" opacity="0.78"/>`;
+  // Lamp glow from window
+  s+=stipple(0,40,130,120,0.0012,'#c8b040',2.5);
+
+  // ROAD
+  const rdD=wRect(0,272,520,68,1);
+  s+=`<path d="${rdD}" fill="#141210" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatch('stRdH1',0,272,520,68,0,3,'#0c0b09',0.85);
+  s+=hatch('stRdH2',0,272,520,68,82,1,'#0a0908',0.4);
+
+  // Pavement kerb
+  const pavD=wRect(0,245,520,30,1.5);
+  s+=`<path d="${pavD}" fill="#8a8680" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatch('pavH2',0,245,520,30,12,1,'#6a6660',0.38);
+  for(let i=0;i<9;i++){
+    s+=`<path d="${wLine(i*62,245,i*62,275,4,1.2)}" stroke="#6a6660" stroke-width="0.8" fill="none" opacity="0.38"/>`;
+  }
+
+  // ── BUS — huge, low-angle ──
+  const bx=105,by=46;
+  // Shadow
+  s+=`<path d="${wBlob(bx+148,264,168,17,12)}" fill="#0a0908" opacity="0.8"/>`;
+
+  // Upper deck
+  const buD=wRect(bx+5,by,302,84,2.5);
+  s+=`<path d="${buD}" fill="#222018" stroke="#0c0b09" stroke-width="2.5"/>`;
+  s+=hatch('buH1',bx+5,by,302,84,82,2,'#0c0b09',0.85);
+  s+=hatch('buH2',bx+5,by,302,84,35,1,'#0a0908',0.4);
+
+  // Lower deck
+  const blD=wRect(bx,by+81,310,106,2);
+  s+=`<path d="${blD}" fill="#1c1a16" stroke="#0c0b09" stroke-width="2.5"/>`;
+  s+=hatch('blH',bx,by+81,310,106,80,2,'#0c0b09',0.8);
+
+  // Route blind — dominant
+  const blindD=wRect(bx+10,by+6,106,33,1.5);
+  s+=`<path d="${blindD}" fill="#0a0908" stroke="#181614" stroke-width="1.2"/>`;
+  s+=`<text x="${bx+63}" y="${by+28}" text-anchor="middle" font-family="Oswald,sans-serif" font-size="17" font-weight="700" fill="#c4b050" letter-spacing="3" opacity="0.92">343</text>`;
+
+  // Upper windows — big, from below
+  for(let i=0;i<6;i++){
+    const lit=sr()>0.38;
+    const wx=bx+12+i*49,wy=by+14;
+    const wD=wRect(wx,wy,42,62,1.5);
+    s+=`<path d="${wD}" fill="${lit?'#b8a840':'#0c0b09'}" stroke="#0c0b09" stroke-width="1.5" opacity="${lit?0.48:0.92}"/>`;
+    if(lit){
+      // Foreshortened figure from below
+      s+=`<path d="${wBlob(wx+21,wy+44,14,18,8)}" fill="#282018" opacity="0.88"/>`;
+      s+=`<path d="${wBlob(wx+21,wy+27,9,12,8)}" fill="#282018" opacity="0.72"/>`;
+    }else{
+      s+=hatchPath(`buw${i}`,wD,wx,wy,52,2,'#0a0908',0.7);
+    }
+  }
+  // Lower windows
+  for(let i=0;i<4;i++){
+    const lwD=wRect(bx+18+i*72,by+94,56,50,1.5);
+    s+=`<path d="${lwD}" fill="#0c0b09" stroke="#0a0908" stroke-width="1.2" opacity="0.85"/>`;
+    s+=hatchPath(`blw${i}`,lwD,bx+18+i*72,by+94,52,2,'#0a0908',0.65);
+  }
+
+  // Front edge
+  const frontD=wRect(bx,by,10,187,1.5);
+  s+=`<path d="${frontD}" fill="#141210" stroke="#0c0b09" stroke-width="1.5"/>`;
+  s+=hatch('frontH',bx,by,10,187,0,3,'#0a0908',0.85);
+
+  // Wheels — wide ellipses, foreshortened
+  [[bx+64,258,52,17],[bx+258,258,52,17]].forEach(([cx,cy,rx,ry],wi)=>{
+    const tyD=wBlob(cx,cy,rx,ry,12);
+    s+=`<path d="${tyD}" fill="#0e0d0b" stroke="#0c0b09" stroke-width="2"/>`;
+    s+=hatchPath(`bty${wi}`,tyD,cx-rx,cy-ry,0,2,'#0a0908',0.75);
+    // Hub
+    s+=`<path d="${wBlob(cx,cy,11,6,8)}" fill="#1c1a16" stroke="#2a2820" stroke-width="1"/>`;
+    s+=`<circle cx="${(cx+3).toFixed(1)}" cy="${(cy-2).toFixed(1)}" r="1.8" fill="#3a3830" opacity="0.5"/>`;
+  });
+
+  // Puddle reflection
+  s+=hatch('pudH',bx,268,310,30,87,1,'#2a2820',1.5);
+  if(isRaining)s+=rain(45,0,0,520,340);
+
+  s+=`<path d="${wRect(2,2,516,336,1.5)}" fill="none" stroke="#0c0b09" stroke-width="5.5"/>`;
+  s+=`<rect width="520" height="340" fill="transparent" filter="url(#gritD)"/>`;
+  s+=`</svg>`;
+  return s;
+}
+
+// ─── PANEL ORCHESTRATION ──────────────────────────────────────────────────────
+function choosePanelType(){
+  const rain=(W.weather?.rain||0)>0.2;
+  const h=new Date().getHours();
+  const dark=h>=21||h<6;
+  const late=(W.busArrivals?.arrivals?.[0]?.timeToStation||0)>480;
+  const pool=['wide','face','interior','street'];
+  if(rain) pool.push('face','face');
+  if(dark) pool.push('wide','street');
+  if(late) pool.push('interior','face');
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function generateCaption(type){
+  const now=new Date();
+  const h=now.getHours();
+  const mmdd=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const saint=SAINTS[mmdd];
+  const w=W.weather,aq=W.airQuality,c=W.carbon,tide=W.tide,bus=W.busArrivals,parl=W.parliament,pois=W.overpass;
+  const frags=[];
+  if(h>=6&&h<9)  frags.push("The morning shift. South London assembling itself, reluctantly.");
+  if(h>=9&&h<12) frags.push("Mid-morning. The city finding its pace.");
+  if(h>=12&&h<14)frags.push("Noon. The light flat and noncommittal, like a witness statement.");
+  if(h>=14&&h<17)frags.push("The afternoon stretched ahead. Nobody was in a hurry to reach the end of it.");
+  if(h>=17&&h<20)frags.push("Rush hour. The city consolidating its opinion of the day.");
+  if(h>=20&&h<23)frags.push("Late enough that the reasons for being on this bus were getting private.");
+  if(h>=23||h<5) frags.push("The small hours. The city showing its working.");
+  if(w){
+    const t=Math.round(w.temperature_2m);
+    if(w.rain>1.5)      frags.push(`${t}°. Rain in earnest. Not London drizzle — actual weather.`);
+    else if(w.rain>0.3) frags.push(`${t}° and a fine rain doing what it does to this city. Darkening everything it touches.`);
+    else                frags.push(`${t}°. Dry, at least. You couldn't ask for much more than that.`);
+    if(w.wind_speed_10m>30)frags.push("The wind had something to say about the direction you were heading.");
+  }
+  if(aq?.nitrogen_dioxide>50)frags.push(`The Old Kent Road air — ${Math.round(aq.nitrogen_dioxide)} micrograms of nitrogen dioxide and counting. You breathed it anyway.`);
+  if(c){
+    if(c.index==='very low'||c.index==='low')frags.push("The grid was running clean tonight. Somewhere, a turbine was having a quiet night.");
+    if(c.index==='high'||c.index==='very high')frags.push("Gas turbines spinning hard somewhere to keep the lights on down here.");
+  }
+  if(tide){
+    const lv=parseFloat(tide.value);
+    if(!isNaN(lv)){
+      if(lv>4.5)    frags.push("The river was high. You could feel it even at this distance — a tidal pressure from the south.");
+      else if(lv<1.2)frags.push("Low tide. The Thames showing its mud. It always looked more honest then.");
+      else           frags.push("The river doing what rivers do. Rising and falling. Unimpressed.");
+    }
+  }
+  if(bus?.arrivals?.length>0){
+    const m=Math.round(bus.arrivals[0].timeToStation/60);
+    if(m>8)      frags.push(`The next 343 was ${m} minutes away at ${bus.stop}. That was long enough to change your mind about most things.`);
+    else if(m>3) frags.push(`${m} minutes to the next one at ${bus.stop}. The city can do a lot to you in ${m} minutes.`);
+    else         frags.push(`Two minutes at ${bus.stop}. It always came, eventually.`);
+  }
+  if(parl)frags.push(`Someone across the aisle had Parliament on their phone. They were discussing ${parl.toLowerCase()}. Nobody on the top deck looked like they expected resolution.`);
+  if(saint)frags.push(`Today was ${saint}. The city hadn't noticed.`);
+  if(pois?.length>0){
+    const poi=pois[Math.floor(Math.random()*pois.length)];
+    const tw={pub:'the pub',place_of_worship:'the church of',courthouse:'the court at',library:'the library'}[poi.type]||'the place called';
+    frags.push(`We passed ${tw} — ${poi.name}. Something had happened there. Along this route, something always had.`);
+  }
+  const openers={
+    face:["The window did what windows do on a night like this.","I stopped watching the city and looked at my reflection instead. It looked back without comment.","Rain on glass. My face superimposed over all of it. The city going on regardless."],
+    wide:["From outside the 343 looked like any other bus. That was its cover.","Exterior. The bus on the wet street. South London holding its shape against the dark.","You see a different city from the top deck of the 343. It doesn't see you back."],
+    interior:["Top deck. Eight passengers. Eight separate reasons for being here that nobody was sharing.","The interior after seven: fluorescent light, damp coats, the long silence of people not making eye contact.","Nobody on the top deck talks to each other. That's the compact. You take the top deck, you take the silence."],
+    street:["From street level it comes out of the dark like a decision you'd already made.","The 343 looms at you from below. All that glass, all those lit windows, all those people going somewhere.","Street level. Looking up at it. The bus filling the frame like an argument you were going to lose."],
+  };
+  const opener=openers[type][Math.floor(Math.random()*openers[type].length)];
+  const chosen=frags.sort(()=>Math.random()-0.5).slice(0,Math.min(3,frags.length));
+  return opener+(chosen.length?' '+chosen.join(' '):'');
+}
+
+function createPanel(){
+  const type=choosePanelType();
+  const s0=Date.now()^(Math.random()*0xffffff)|0;
+  const svgFns={face:svgFace,wide:svgWide,interior:svgInterior,street:svgStreet};
+  const caption=generateCaption(type);
+  const timeStr=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  const n=++W.panelCount;
+  const el=document.createElement('div');
+  el.className='panel';
+  el.innerHTML=`${svgFns[type](s0)}<div class="panel-caption">${caption}<div class="panel-meta"><span>${timeStr}</span><span>PANEL ${n}</span><span>${type.toUpperCase()}</span></div></div>`;
+  const strip=document.getElementById('strip');
+  strip.insertBefore(el,strip.firstChild);
+  document.getElementById('loading').style.display='none';
+}
+
+// ─── COUNTDOWN & BOOT ─────────────────────────────────────────────────────────
+function startCountdown(){
+  cdSecs=INTERVAL_MS/1000;clearInterval(cdTimer);
+  cdTimer=setInterval(()=>{
+    cdSecs--;
+    const m=Math.floor(cdSecs/60),s=cdSecs%60;
+    document.getElementById('countdown').textContent=`${m}:${String(s).padStart(2,'0')}`;
+    if(cdSecs<=0)newCycle();
+  },1000);
+}
+async function newCycle(){await refreshAll();createPanel();startCountdown();}
+
+(async()=>{
+  setInterval(()=>{
+    document.getElementById('status-time').textContent=
+      new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  },1000);
+  await refreshAll();
+  createPanel();
+  setTimeout(()=>createPanel(),950);
+  startCountdown();
+})();
+</script>
+</body>
+</html>
